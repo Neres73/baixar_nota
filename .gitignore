@@ -1,0 +1,17 @@
+# Configuração local (caminhos, URL do portal) — nunca versionar
+.env
+
+# Notas, planilhas e relatórios
+*.pdf
+*.xlsx
+*.xlsb
+*.xls
+notas/
+_diagnostico_nix/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/

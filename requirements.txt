@@ -1,0 +1,9 @@
+openpyxl>=3.1
+python-dotenv>=1.0
+# Etapa do SAP (Windows)
+pywin32>=306
+pywinauto>=0.6
+pyautogui>=0.9
+pyperclip>=1.8
+# Etapa do portal web
+playwright>=1.40
