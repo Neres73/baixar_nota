@@ -4,12 +4,16 @@ Download de notas fiscais em lote — SAP + portal web + verificação.
 Lê a planilha de ocorrências do mês e baixa o PDF de cada nota, com menu no
 terminal:
 
-    1 - Baixar notas de SERVIÇO no SAP (transação NIXNFSE)
-    2 - Baixar notas de MATERIAL no portal web (a partir do relatório do SAP)
+    1 - Baixar no SAP as notas de serviço (transação NIXNFSE)
+    2 - Baixar no portal web as que não saíram pelo SAP
     3 - Verificar planilha × pasta
     4 - Fluxo completo (1 → 2 → 3)
     5 - Rebaixar só o que está faltando (3 → 1 → 2 → 3)
     6 - Trocar a planilha de entrada (só nesta sessão)
+
+O SAP só tem notas de SERVIÇO. O portal tem TODAS as notas (serviço e
+material). Por isso tudo o que não sai pelo SAP — não encontrada OU erro ao
+salvar o PDF — é marcado como "Portal" no relatório e baixado na etapa 2.
 
 Todas as etapas leem a planilha pela MESMA função (ler_planilha), então o
 nome do arquivo de cada linha é sempre o mesmo em todo o fluxo:
@@ -729,14 +733,14 @@ def limpar_extras(pasta, nome_base):
         pass
 
 
-def imprimir_parcial(processadas, total, ok, erros, materiais, inicio):
+def imprimir_parcial(processadas, total, ok, para_portal, inicio):
     decorrido = time.time() - inicio
     media = decorrido / processadas if processadas else 0
     eta_seg = media * (total - processadas)
     hora_fim = (datetime.now() + timedelta(seconds=eta_seg)).strftime("%H:%M")
     pct = (processadas / total * 100) if total else 0
     print(f"  ── PARCIAL {processadas}/{total} ({pct:.0f}%) | "
-          f"✔ {ok} OK | ✘ {erros} erro(s) | {materiais} material | "
+          f"✔ {ok} OK | → {para_portal} para o portal | "
           f"média {media:.1f}s/nota | restam ~{formatar_duracao(eta_seg)} "
           f"(término ~{hora_fim}) ──")
 
@@ -767,7 +771,7 @@ def baixar_notas_sap(registros):
     dados_relatorio = []
     selecao_pronta = False
     inicio_geral = time.time()
-    processadas = cont_ok = cont_erro = cont_material = 0
+    processadas = cont_ok = cont_portal = 0
 
     for r in registros:
         i                = r["linha"]
@@ -807,17 +811,16 @@ def baixar_notas_sap(registros):
                 row_count = 0
 
             if row_count == 0:
-                dados_relatorio.append({**base_rel, "tipo": "Material",
+                dados_relatorio.append({**base_rel, "tipo": TIPO_PORTAL,
                                         "status": "Não encontrada no SAP",
-                                        "obs": "NFS-e não localizada para esta ocorrência"})
-                cont_material += 1
-                print(f"{prefixo} → MATERIAL (não encontrada no SAP) "
+                                        "obs": "NFS-e não localizada no SAP — será baixada no portal"})
+                cont_portal += 1
+                print(f"{prefixo} → PORTAL (não está no SAP) "
                       f"[{time.time() - inicio_nota:.1f}s]")
                 if REUSAR_TELA_SELECAO:
                     selecao_pronta = False
                 if processadas % PARCIAL_A_CADA == 0:
-                    imprimir_parcial(processadas, total, cont_ok, cont_erro,
-                                     cont_material, inicio_geral)
+                    imprimir_parcial(processadas, total, cont_ok, cont_portal, inicio_geral)
                 continue
 
             print(f"{prefixo} → encontrada no SAP, abrindo PDF...")
@@ -846,9 +849,10 @@ def baixar_notas_sap(registros):
             limpar_extras(PASTA_DESTINO, nome_base)
 
             if pdf_valido(caminho):
-                status, obs = "OK", caminho
+                obs = caminho
                 if ocorrencia != ocorrencia_bruta:
                     obs += f"  (ocorrência original: {ocorrencia_bruta} → usada: {ocorrencia})"
+                dados_relatorio.append({**base_rel, "tipo": TIPO_SAP, "status": "OK", "obs": obs})
                 cont_ok += 1
                 print(f"{prefixo} → ✔ {nome_arquivo} salvo [{time.time() - inicio_nota:.1f}s]")
             else:
@@ -857,23 +861,24 @@ def baixar_notas_sap(registros):
                         os.remove(caminho)
                     except Exception:
                         pass
-                status = "ERRO: PDF não capturado"
-                obs = ("A nota abriu no SAP mas nenhum PDF novo apareceu nas pastas "
-                       "monitoradas dentro do TIMEOUT_CAPTURA.")
-                cont_erro += 1
-                print(f"{prefixo} → ✘ FALHOU: PDF inválido [{time.time() - inicio_nota:.1f}s]")
+                # O portal tem todas as notas: em vez de parar aqui, tenta lá
+                dados_relatorio.append({**base_rel, "tipo": TIPO_PORTAL,
+                                        "status": "Erro no SAP",
+                                        "obs": "A nota abriu no SAP mas o PDF não foi capturado "
+                                               "— será baixada no portal"})
+                cont_portal += 1
+                print(f"{prefixo} → PORTAL (PDF não capturado no SAP) "
+                      f"[{time.time() - inicio_nota:.1f}s]")
 
         except Exception as e:
-            status, obs = f"ERRO: {e}", str(e)
-            cont_erro += 1
-            print(f"{prefixo} → ✘ ERRO: {e} [{time.time() - inicio_nota:.1f}s]")
+            dados_relatorio.append({**base_rel, "tipo": TIPO_PORTAL, "status": "Erro no SAP",
+                                    "obs": f"{e} — será baixada no portal"})
+            cont_portal += 1
+            print(f"{prefixo} → PORTAL (erro no SAP: {e}) [{time.time() - inicio_nota:.1f}s]")
             selecao_pronta = False
 
-        dados_relatorio.append({**base_rel, "tipo": "Serviço", "status": status, "obs": obs})
-
         if processadas % PARCIAL_A_CADA == 0:
-            imprimir_parcial(processadas, total, cont_ok, cont_erro,
-                             cont_material, inicio_geral)
+            imprimir_parcial(processadas, total, cont_ok, cont_portal, inicio_geral)
 
     duracao = time.time() - inicio_geral
     if total:
@@ -885,7 +890,13 @@ def baixar_notas_sap(registros):
 # Relatório do SAP: a coluna "Arquivo" leva o nome único, e é por ela que o
 # NIX sabe com que nome salvar o PDF (ex.: '12345 (2).pdf').
 CABECALHOS_RELATORIO = ["Linha", "Ocorrência", "Nota Fiscal", "Arquivo",
-                        "Tipo", "Status PDF", "Observação"]
+                        "Baixar no", "Status PDF", "Observação"]
+
+# Coluna "Baixar no": de onde a nota sai. O SAP só tem notas de serviço;
+# o portal tem todas, então tudo que não sai pelo SAP vira "Portal".
+TIPO_SAP = "SAP"
+TIPO_PORTAL = "Portal"
+TIPOS_PORTAL_ACEITOS = ("portal", "material")   # "material" = relatórios antigos
 COL_REL_STATUS = 6
 COL_REL_OBS = 7
 
@@ -899,12 +910,8 @@ def gerar_relatorio_excel(dados):
                        CABECALHOS_RELATORIO, [8, 18, 18, 20, 12, 22, 35])
 
     for row_idx, d in enumerate(dados, 3):
-        if d["tipo"] == "Serviço" and d["status"] == "OK":
-            fill = FILL_VERDE
-        elif d["tipo"] == "Serviço":
-            fill = FILL_AMARELO
-        else:
-            fill = FILL_VERMELHO
+        # verde = já baixada | amarelo = pendente, vai para o portal
+        fill = FILL_VERDE if d["status"] == "OK" else FILL_AMARELO
         valores = [d["linha"], d["ocorrencia"], d["nota"], d["arquivo"],
                    d["tipo"], d["status"], d.get("obs", "")]
         escrever_linha(ws, row_idx, valores, fill, col_texto_esquerda=COL_REL_OBS)
@@ -918,34 +925,29 @@ def gerar_relatorio_excel(dados):
 
 
 def imprimir_relatorio_sap(dados):
-    servicos  = [d for d in dados if d["tipo"] == "Serviço"]
-    materiais = [d for d in dados if d["tipo"] == "Material"]
-    ok        = [d for d in servicos if d["status"] == "OK"]
-    erros     = [d for d in servicos if d["status"] != "OK"]
+    ok           = [d for d in dados if d["status"] == "OK"]
+    nao_achadas  = [d for d in dados if d["status"] == "Não encontrada no SAP"]
+    erros_sap    = [d for d in dados if d["status"] == "Erro no SAP"]
 
     print("\n" + "=" * 60)
     print("           RELATÓRIO FINAL — SAP (NFS-e)")
     print("=" * 60)
-    print(f"  Total de ocorrências           : {len(dados)}")
-    print(f"  Serviço  (NFS-e encontrada)    : {len(servicos)}")
-    print(f"    ✔  PDFs salvos com sucesso   : {len(ok)}")
-    print(f"    ✘  Erros ao salvar PDF       : {len(erros)}")
-    print(f"  Material (NFS-e não encontrada): {len(materiais)}")
+    print(f"  Total de ocorrências            : {len(dados)}")
+    print(f"  ✔  Baixadas pelo SAP            : {len(ok)}")
+    print(f"  →  Para o portal                : {len(nao_achadas) + len(erros_sap)}")
+    print(f"       não estão no SAP           : {len(nao_achadas)}")
+    print(f"       deram erro no SAP          : {len(erros_sap)}")
     print("=" * 60)
 
-    if materiais:
-        print("\n  Ocorrências → MATERIAL (vão para o NIX web):")
-        for d in materiais:
-            print(f"    Linha {d['linha']:>4} | Ocorrência {d['ocorrencia']} | {d['arquivo']}.pdf")
-    if erros:
-        print("\n  Serviços com ERRO ao salvar PDF:")
-        for d in erros:
-            print(f"    Linha {d['linha']:>4} | Ocorrência {d['ocorrencia']} | {d['status']}")
+    if erros_sap:
+        print("\n  Deram erro no SAP (serão tentadas no portal):")
+        for d in erros_sap:
+            print(f"    Linha {d['linha']:>4} | Ocorrência {d['ocorrencia']} | {d['obs']}")
     print("=" * 60 + "\n")
 
 
 # =====================================================================
-#            ETAPA 2 — NIX WEB (Material) — antigo nix_material.py
+#     ETAPA 2 — PORTAL WEB (tudo que não saiu pelo SAP) — antigo nix_material.py
 # =====================================================================
 _INDICE_COLUNA_CACHE = None
 
@@ -955,8 +957,8 @@ def normalizar_ocorrencia(valor):
     return digitos if digitos else None
 
 
-def ler_materiais():
-    """Lê as linhas 'Material' do relatório gerado pela etapa do SAP."""
+def ler_pendentes_portal():
+    """Lê do relatório do SAP as linhas marcadas para baixar no portal."""
     if not os.path.exists(RELATORIO_EXCEL):
         print(f"ERRO: relatório não encontrado em:\n  {RELATORIO_EXCEL}")
         print("Rode a etapa do SAP (opção 1) primeiro.")
@@ -966,7 +968,7 @@ def ler_materiais():
     ws = wb.active
     formato_novo = ws.cell(row=2, column=4).value == "Arquivo"
 
-    materiais, ignoradas = [], 0
+    pendentes, ignoradas = [], 0
     for row in ws.iter_rows(min_row=3, values_only=True):
         if not row or not row[0]:
             continue
@@ -975,20 +977,20 @@ def ler_materiais():
         else:  # relatório gerado pelo main.py antigo (sem coluna Arquivo)
             linha, ocorrencia, nota, tipo = row[:4]
             arquivo = nota
-        if str(tipo).strip().lower() != "material":
+        if str(tipo).strip().lower() not in TIPOS_PORTAL_ACEITOS:
             continue
         ocorrencia_num = normalizar_ocorrencia(ocorrencia)
         if not ocorrencia_num:
             ignoradas += 1
             print(f"  ⚠ Linha {linha}: ocorrência '{ocorrencia}' não é numérica — pulando.")
             continue
-        materiais.append({"linha": linha, "ocorrencia": ocorrencia_num,
+        pendentes.append({"linha": linha, "ocorrencia": ocorrencia_num,
                           "nota": limpar(nota), "arquivo": limpar(arquivo)})
 
-    print(f"{len(materiais)} nota(s) de Material encontradas no relatório.")
+    print(f"{len(pendentes)} nota(s) para baixar no portal.")
     if ignoradas:
         print(f"{ignoradas} linha(s) ignorada(s) por não terem ocorrência numérica.")
-    return materiais
+    return pendentes
 
 
 def atualizar_relatorio(resultados):
@@ -1008,7 +1010,8 @@ def atualizar_relatorio(resultados):
         linha_planilha = ws.cell(row=row_idx, column=1).value
         if linha_planilha in resultados:
             r = resultados[linha_planilha]
-            fill = FILL_VERDE if r["status"] == "OK" else FILL_AMARELO
+            # depois do portal: verde = baixada | vermelho = não saiu em lugar nenhum
+            fill = FILL_VERDE if r["status"] == "OK" else FILL_VERMELHO
             for col in range(1, ultima_col + 1):
                 cell = ws.cell(row=row_idx, column=col)
                 cell.fill = fill
@@ -1275,9 +1278,9 @@ def abrir_navegador_nix(p):
     return context, page
 
 
-def _baixar_um_material(page, context, item, n, total):
+def _baixar_uma_nota_portal(page, context, item, n, total):
     """
-    Processa UMA nota de material.
+    Baixa UMA nota no portal (serviço ou material).
     Devolve (resultado, navegador_caiu). Se navegador_caiu for True, quem
     chamou reabre o navegador e tenta esta mesma nota de novo.
     """
@@ -1349,11 +1352,11 @@ def _baixar_um_material(page, context, item, n, total):
     return resultado, False
 
 
-def processar_materiais_nix(materiais):
+def processar_portal(pendentes):
     _carregar_libs_nix()
     os.makedirs(PERFIL_NAVEGADOR, exist_ok=True)
     resultados = {}
-    total = len(materiais)
+    total = len(pendentes)
 
     with sync_playwright() as p:
         context, page = abrir_navegador_nix(p)
@@ -1361,8 +1364,8 @@ def processar_materiais_nix(materiais):
         idx = 0
         quedas_seguidas = 0
         while idx < total:
-            item = materiais[idx]
-            resultado, caiu = _baixar_um_material(page, context, item, idx + 1, total)
+            item = pendentes[idx]
+            resultado, caiu = _baixar_uma_nota_portal(page, context, item, idx + 1, total)
 
             if caiu:
                 quedas_seguidas += 1
@@ -1403,7 +1406,7 @@ def imprimir_resumo_nix(resultados):
     ok    = [r for r in resultados.values() if r["status"] == "OK"]
     erros = [r for r in resultados.values() if r["status"] != "OK"]
     print("\n" + "=" * 60)
-    print("        RELATÓRIO FINAL — NIX Material")
+    print("        RELATÓRIO FINAL — PORTAL")
     print("=" * 60)
     print(f"  Total processado      : {len(resultados)}")
     print(f"  ✔  Salvos com sucesso : {len(ok)}")
@@ -1542,10 +1545,11 @@ def fluxo_nix():
     if not URL_NIX:
         print("NIX_URL não configurada no .env — etapa do portal web não pode rodar.")
         return
-    materiais = ler_materiais()
-    if not materiais:
+    pendentes = ler_pendentes_portal()
+    if not pendentes:
+        print("Nada para baixar no portal — tudo saiu pelo SAP.")
         return
-    resultados = processar_materiais_nix(materiais)
+    resultados = processar_portal(pendentes)
     atualizar_relatorio(resultados)
     imprimir_resumo_nix(resultados)
 
@@ -1607,8 +1611,8 @@ def trocar_planilha():
 
 
 OPCOES = {
-    "1": ("Baixar notas de SERVIÇO no SAP (NIXNFSE)", fluxo_sap),
-    "2": ("Baixar notas de MATERIAL no NIX web", fluxo_nix),
+    "1": ("Baixar no SAP as notas de serviço (NIXNFSE)", fluxo_sap),
+    "2": ("Baixar no portal as que não saíram pelo SAP", fluxo_nix),
     "3": ("Verificar planilha × pasta", fluxo_verificar),
     "4": ("Fluxo completo (1 → 2 → 3)", fluxo_completo),
     "5": ("Rebaixar só o que está faltando", fluxo_reprocessar),

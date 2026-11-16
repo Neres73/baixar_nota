@@ -1,8 +1,39 @@
 # Download de Notas Fiscais em Lote — SAP + Portal Web
 
-Script em Python que baixa em lote os PDFs das notas fiscais listadas numa planilha de ocorrências: as notas de serviço pelo SAP e as que não estão no SAP por um portal web. No fim, confere se cada linha da planilha tem o seu PDF na pasta.
+Aplicativo para Windows (Python + SAP GUI Scripting + Playwright + CustomTkinter) que baixa em lote os PDFs das notas fiscais listadas numa planilha de ocorrências: as notas de serviço pelo SAP e as que não estão no SAP por um portal web. No fim, confere se cada linha da planilha tem o seu PDF na pasta.
 
-Uso no meu trabalho, no back-office de Manutenção. O download das notas era feito à mão por 2 pessoas, levando cerca de 6 dias de trabalho por mês somando os lotes. Hoje uma pessoa só faz com o script, e o script leva metade do tempo do processo manual.
+Uso no meu trabalho, no back-office de Manutenção. O download das notas era feito à mão por 2 pessoas, levando cerca de 6 dias de trabalho por mês somando os lotes. Hoje uma pessoa só faz com o aplicativo, que leva metade do tempo do processo manual.
+
+<p align="center">
+  <img src="docs/tela_inicial.png" width="290" alt="Tela inicial: escolher planilha e pasta">
+  &nbsp;
+  <img src="docs/andamento.png" width="290" alt="Andamento: etapas SAP, portal e conferência">
+  &nbsp;
+  <img src="docs/resultado.png" width="290" alt="Resultado: baixadas, aguardando o portal e com problema">
+</p>
+<p align="center"><sub>Telas com dados fictícios</sub></p>
+
+---
+
+## Evolução
+
+| Versão | Como era usado |
+|---|---|
+| 1. Script | Menu no terminal com seis opções (`python main.py`) |
+| 2. Aplicativo | Dois passos (planilha e pasta) e um botão que faz tudo; perguntas do terminal viraram janelas de confirmação; instalador e atualização automática |
+
+O `main.py` continua funcionando sozinho pelo menu do terminal; o aplicativo (`app_notas.py`) usa ele como motor.
+
+---
+
+## Layout
+
+- **Dois passos numerados**: escolher a planilha do mês e a pasta onde salvar. Depois de escolhidos, viram um ✓ com o nome do arquivo e o botão "Trocar"
+- **Um botão principal**: "Baixar todas as notas" roda SAP → portal → conferência em sequência
+- **"Outras opções"** guarda as etapas avulsas (só SAP, só portal, conferir pasta, baixar o que faltou) sem poluir a tela
+- **Andamento por etapas**: as três etapas aparecem como trilha (`1 SAP › 2 Portal › 3 Conferência`), com relógio e contadores de baixadas, aguardando o portal e com problema
+- **Resultado com próxima ação**: "Baixar o que faltou", "Abrir pasta" e "Abrir relatório" ficam no próprio cartão do resultado
+- **Detalhes técnicos escondidos**: o log completo fica num painel recolhido, para mandar print a quem cuida da automação
 
 ---
 
@@ -16,9 +47,9 @@ Cada nota exigia o mesmo caminho: procurar a ocorrência no SAP, abrir a nota, s
 
 ---
 
-## O que o script faz
+## O que o aplicativo faz
 
-Menu no terminal com seis opções:
+No terminal, as mesmas etapas aparecem num menu com seis opções:
 
 ```
 1 - Baixar notas de SERVIÇO no SAP
@@ -57,7 +88,14 @@ Menu no terminal com seis opções:
 
 ---
 
-## Instalação
+## Distribuição para a equipe
+
+- **Instalador portátil**: um `.zip` com o Python embutido e um `.bat` de instalação. Não precisa instalar Python, pedir acesso de administrador nem ter internet
+- **Atualização automática**: ao abrir, o programa olha uma pasta compartilhada (`PASTA_ATUALIZACAO`). Se houver versão nova completa lá, copia os arquivos e reabre sozinho; sem rede, abre a versão instalada (`atualizador.py`)
+
+---
+
+## Instalação (para rodar pelo código)
 
 Requisitos: **Windows**, Python 3.10+, SAP GUI com scripting habilitado e Microsoft Edge.
 
@@ -84,17 +122,19 @@ copy .env.example .env
 |---|---|
 | `ARQUIVO_LISTA` | Planilha de ocorrências do mês (dá para trocar pela opção 6 do menu) |
 | `PASTA_DESTINO` | Pasta onde os PDFs e os relatórios são salvos (padrão: `./notas`) |
-| `NIX_URL` | Página de busca de ocorrências do portal web |
+| `NIX_URL` | Página de busca de ocorrências do portal web (no aplicativo, também em ⚙ Configurações) |
+| `PASTA_ATUALIZACAO` | Pasta compartilhada das atualizações (vazio = não atualiza) |
 
 Ajustes finos (tempos de espera, pastas vigiadas, nomes de coluna aceitos, modo de teste com poucas notas) ficam nas constantes do topo do `main.py`, todas comentadas.
 
 ## Uso
 
 ```bash
-python main.py
+python app_notas.py   # aplicativo com interface
+python main.py        # menu no terminal
 ```
 
-Deixe o SAP aberto e logado antes de escolher a opção 1. Na primeira vez que a etapa do portal rodar, faça o login na janela do Edge que abrir; a sessão fica salva para as próximas. O script **não lê, guarda nem digita senha**.
+Deixe o SAP aberto e logado antes de começar. Na primeira vez que a etapa do portal rodar, faça o login na janela do Edge que abrir; a sessão fica salva para as próximas. O aplicativo **não lê, guarda nem digita senha**.
 
 ---
 
@@ -112,13 +152,17 @@ Deixe o SAP aberto e logado antes de escolher a opção 1. Na primeira vez que a
 ## Limitações
 
 - Só roda no Windows, porque depende do SAP GUI Scripting
-- Os caminhos de tela do SAP e os seletores do portal são os do ambiente onde o script foi feito; outro ambiente exige ajustes
+- Os caminhos de tela do SAP e os seletores do portal são os do ambiente onde o aplicativo foi feito; outro ambiente exige ajustes
 - A captura em segundo plano depende de o SAP gravar o PDF numa pasta temporária. Se não gravar, existe um método reserva por cliques na tela (desligado por padrão, porque ocupa o computador)
 
 ## Estrutura
 
 ```
-├── main.py            # menu, leitura da planilha, etapas SAP / portal / verificação
+├── app_notas.py       # interface (CustomTkinter): passos, andamento por etapa, resultado
+├── main.py            # motor: menu, leitura da planilha, etapas SAP / portal / verificação
+├── atualizador.py     # atualização automática pela pasta compartilhada
+├── icone.ico
+├── docs/              # prints do README (dados fictícios)
 ├── requirements.txt
 ├── .env.example       # modelo de configuração
 └── .gitignore         # ignora .env, PDFs, planilhas e relatórios
